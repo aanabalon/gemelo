@@ -1,0 +1,111 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  READER
+  ADMIN
+}
+
+model User {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  password  String
+  role      Role     @default(READER)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Cycle {
+  id                     Int          @id @default(autoincrement())
+  tunnelId               String       @default("tunnel-1") // For future multi-tunnel support
+  startReal              DateTime
+  endReal                DateTime?
+  endEstimated           DateTime?
+  dischargeTime          DateTime?
+  isCurrent              Boolean      @default(false)
+  energyAccumulatedTotal Float        @default(0)
+  setPoint               Float        @default(0)
+  
+  // Calculated aggregates for quick access
+  avgSerpentinTotal      Float?
+  avgDoorTotal           Float?
+  activeTimeMinutes      Float?
+  overfrozenTimeMinutes  Float?
+  
+  points                 CyclePoint[]
+
+  createdAt              DateTime     @default(now())
+  updatedAt              DateTime     @updatedAt
+}
+
+model CyclePoint {
+  cycleId            Int
+  cycle              Cycle    @relation(fields: [cycleId], references: [id], onDelete: Cascade)
+  timestamp          DateTime
+
+  avgSerpentin       Float
+  avgDoor            Float
+  operationState     Int
+  energyInstant      Float
+  energyAccumulated  Float
+  hourFromCycleStart Float
+
+  @@id([cycleId, timestamp])
+  @@index([timestamp])
+}
+
+model EnergyConfig {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  expression  String
+  description String?
+  enabled     Boolean  @default(true)
+  lastProcessedAt DateTime?
+  derivedValues EnergyDerivedValue[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model EnergyDerivedValue {
+  id        Int          @default(autoincrement())
+  configId  String
+  config    EnergyConfig @relation(fields: [configId], references: [id], onDelete: Cascade)
+  timestamp DateTime
+  value     Float
+
+  @@id([timestamp, id])
+  @@unique([configId, timestamp], name: "unique_config_timestamp")
+  @@index([timestamp])
+}
+
+model CycleLogicConfig {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  expression  String
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model VariableValue {
+  id          Int      @id @default(autoincrement())
+  variableId  String   // EnergyConfig.id
+  variableName String  // EnergyConfig.name (for easier lookup)
+  timestamp   DateTime
+  value       Float?
+  createdAt   DateTime @default(now())
+
+  @@index([variableName])
+  @@index([timestamp])
+}
+
+model CycleProcessingState {
+  id                     Int      @id @default(1)
+  lastProcessedTimestamp DateTime?
+}

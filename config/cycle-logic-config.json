@@ -1,0 +1,13 @@
+{
+  "minRiseDegrees": 8,
+  "riseWindowMinutes": 30,
+  "minSlope": 0.25,
+  "slopeDurationMinutes": 10,
+  "minDefrostTemperature": -4,
+  "minDefrostSeparationMinutes": 10,
+  "minCycleHours": 18,
+  "maxCycleHours": 168,
+  "operationStartValue": 1,
+  "operationEndValue": 0,
+  "cycleEnergySetPoint": 6650
+}

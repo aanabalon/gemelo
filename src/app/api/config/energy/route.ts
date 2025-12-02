@@ -78,6 +78,7 @@ export async function POST(request: Request) {
 
         return NextResponse.json(config);
     } catch (error) {
+        console.error('Failed to save energy config', error);
         return NextResponse.json({ error: 'Failed to save config' }, { status: 500 });
     }
 }

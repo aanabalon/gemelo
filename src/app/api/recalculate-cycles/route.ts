@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth';
 import { readCycleLogicConfig } from '@/lib/cycleLogicConfig';
-import { processCycles, calculateWatermarkFromClosedCycles, updateCycleProcessingState } from '@/lib/cycles';
+import { processCycles, calculateWatermarkFromClosedCycles, updateCycleProcessingState, resetCycleProcessingState } from '@/lib/cycles';
 import { prisma } from '@/lib/prisma';
 
 export async function POST() {
@@ -23,7 +23,7 @@ export async function POST() {
      */
     console.log('[recalculate-cycles] Clearing existing data...');
     await prisma.cycle.deleteMany();
-    await prisma.cycleProcessingState.deleteMany();
+    await resetCycleProcessingState();
 
     /**
      * Recalculate complete history:

@@ -13,6 +13,7 @@ export interface CycleLogicConfig {
   operationStartValue: number;
   operationEndValue: number;
   cycleEnergySetPoint: number;
+  minOperationZeroMinutesForEndReal: number;
 }
 
 const DEFAULT_CONFIG: CycleLogicConfig = {
@@ -27,6 +28,7 @@ const DEFAULT_CONFIG: CycleLogicConfig = {
   operationStartValue: 1,
   operationEndValue: 0,
   cycleEnergySetPoint: 0,
+  minOperationZeroMinutesForEndReal: 15,
 };
 
 const CONFIG_PATH = path.join(process.cwd(), 'config', 'cycle-logic-config.json');

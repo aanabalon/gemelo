@@ -1,10 +1,9 @@
 import { recomputeDerivedValues } from '@/lib/derivedValues';
 import { MIN_REAL_CONFIG_NAME } from '@/lib/energy/constants';
+import { sortConfigsByDependency } from '@/lib/energy/dependencySort';
 import { prisma } from '@/lib/prisma';
 
 const INTERVAL_MS = Number(process.env.DERIVED_VALUE_POLL_INTERVAL_MS ?? 60000);
-
-let started = false;
 
 async function runPoll() {
   try {
@@ -12,11 +11,12 @@ async function runPoll() {
       where: { enabled: true },
     });
 
-    const orderedConfigs = [...configs].sort((a, b) => {
-      if (a.name === MIN_REAL_CONFIG_NAME) return -1;
-      if (b.name === MIN_REAL_CONFIG_NAME) return 1;
-      return 0;
+    console.log('[DerivedValuePoller] run', {
+      enabledConfigs: configs.length,
+      intervalMs: INTERVAL_MS,
     });
+
+    const orderedConfigs = sortConfigsByDependency(configs);
 
     for (const config of orderedConfigs) {
       try {

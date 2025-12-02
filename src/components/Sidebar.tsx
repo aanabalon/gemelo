@@ -5,7 +5,7 @@ import Image from 'next/image';
 import { usePathname } from 'next/navigation';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
-import { LayoutDashboard, Zap, Settings, LogOut, ChevronLeft, ChevronRight } from 'lucide-react';
+import { LayoutDashboard, Zap, Settings, LogOut, ChevronLeft, ChevronRight, Bell } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 
@@ -28,6 +28,7 @@ export function Sidebar({ role }: SidebarProps) {
         { href: '/dashboard', label: 'Tunel 9', icon: LayoutDashboard, roles: ['READER', 'ADMIN'] },
         { href: '/energy-config', label: 'Config Energía', icon: Zap, roles: ['ADMIN'] },
         { href: '/cycle-logic', label: 'Lógica Ciclos', icon: Settings, roles: ['ADMIN'] },
+        { href: '/notifications', label: 'Alertas', icon: Bell, roles: ['ADMIN'] },
     ];
 
     return (

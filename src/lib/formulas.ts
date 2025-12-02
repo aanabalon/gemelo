@@ -1,7 +1,7 @@
 import { create, all, MathJsStatic } from 'mathjs';
 
 // Create a mathjs instance so we can control available functions
-const math = (create(all) as unknown) as MathJsStatic;
+const math = create(all) as MathJsStatic;
 
 // Restrict the imported functions we expose to the evaluator scope
 // and add a few helpers commonly used in expressions.
@@ -15,15 +15,14 @@ function sum(...args: number[]) {
     return args.map((v) => Number(v) || 0).reduce((s, v) => s + v, 0);
 }
 
-function iff(cond: any, a: any, b: any) {
-    // allow using `iff(condition, trueExpr, falseExpr)` from admin DSL
+function iff<T>(cond: unknown, a: T, b: T): T {
     return cond ? a : b;
 }
 
 /**
  * Safely coerce values that may come from Influx into numbers for mathjs.
  */
-function sanitizeContext(ctx: Record<string, any>): Record<string, number | boolean> {
+function sanitizeContext(ctx: Record<string, unknown>): Record<string, number | boolean> {
     const out: Record<string, number | boolean> = {};
     for (const k of Object.keys(ctx)) {
         const v = ctx[k];
@@ -54,14 +53,17 @@ function sanitizeContext(ctx: Record<string, any>): Record<string, number | bool
  * - Exposes only numeric/boolean variables from context
  * - Adds helper functions: avg, sum, iff
  */
-export function evaluateFormula(expression: string, context: Record<string, any>): any {
+export function evaluateFormula(
+    expression: string,
+    context: Record<string, unknown>
+): number | null {
     try {
         if (typeof expression !== 'string' || !expression.trim()) return null;
 
         const scope = sanitizeContext(context);
 
         // Attach helper functions under safe names
-        const safeScope = {
+        const safeScope: Record<string, number | boolean | ((...args: number[]) => number) | (<T>(cond: unknown, a: T, b: T) => T)> = {
             ...scope,
             avg,
             sum,
@@ -72,12 +74,12 @@ export function evaluateFormula(expression: string, context: Record<string, any>
             min: Math.min,
             max: Math.max,
             pow: Math.pow,
-        } as Record<string, any>;
+        };
 
         const scopeWithDefaults = new Proxy(safeScope, {
             get(target, prop: string | symbol) {
                 if (prop in target) {
-                    return (target as any)[prop];
+                    return (target as Record<string, unknown>)[prop as string];
                 }
                 return 0;
             },
@@ -90,7 +92,9 @@ export function evaluateFormula(expression: string, context: Record<string, any>
         });
 
         // Use math.evaluate with provided scope
-        return math.evaluate(expression, scopeWithDefaults);
+        const result = math.evaluate(expression, scopeWithDefaults);
+        const numeric = typeof result === 'number' ? result : Number(result);
+        return Number.isFinite(numeric) ? numeric : null;
     } catch (error) {
         console.error(`Error evaluating formula "${expression}":`, error);
         return null;
@@ -105,7 +109,7 @@ export function validateFormula(expression: string): boolean {
         if (typeof expression !== 'string' || !expression.trim()) return false;
         math.parse(expression);
         return true;
-    } catch (err) {
+    } catch {
         return false;
     }
 }

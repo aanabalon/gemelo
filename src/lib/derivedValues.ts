@@ -15,6 +15,21 @@ interface DerivedOptions {
 const CHUNK_SIZE = 400;
 const INITIAL_START_DATE = new Date('2025-10-30T00:00:00.000Z');
 
+const DEBUG_NAMES = (process.env.DERIVED_DEBUG_NAMES ?? '')
+  .split(',')
+  .map((n) => n.trim())
+  .filter(Boolean);
+const DEBUG_TIMESTAMP = process.env.DERIVED_DEBUG_TIMESTAMP
+  ? new Date(process.env.DERIVED_DEBUG_TIMESTAMP)
+  : null;
+
+function shouldDebug(configName: string, timestamp: Date) {
+  if (!DEBUG_NAMES.length) return false;
+  if (!DEBUG_NAMES.includes(configName)) return false;
+  if (!DEBUG_TIMESTAMP) return true;
+  return Math.abs(timestamp.getTime() - DEBUG_TIMESTAMP.getTime()) < 1000;
+}
+
 function buildContext(
   point: MappedDataPoint,
   derivedForTimestamp: Record<string, number> = {},
@@ -92,7 +107,15 @@ export async function recomputeDerivedValues(config: EnergyConfig, options: Deri
     return;
   }
 
-  const rawData = await fetchRawData(startFrom, endDate);
+  // Get the timestamp of the last processed data point (not the job timestamp)
+  // This is needed for correct min_real calculation in incremental updates
+  const lastProcessedPoint = await prisma.energyDerivedValue.findFirst({
+    where: { configId: config.id },
+    orderBy: { timestamp: 'desc' },
+    select: { timestamp: true },
+  });
+
+  const rawData = await fetchRawData(startFrom, endDate, lastProcessedPoint?.timestamp ?? undefined);
   if (!rawData.length) {
     await prisma.energyConfig.update({
       where: { id: config.id },
@@ -112,7 +135,7 @@ export async function recomputeDerivedValues(config: EnergyConfig, options: Deri
 
   const allConfigs = options.allConfigs ?? (await prisma.energyConfig.findMany());
 
-  let derivedValuesByTimestamp: DerivedValuesByTimestamp = await loadDerivedValuesForRange(
+  const derivedValuesByTimestamp: DerivedValuesByTimestamp = await loadDerivedValuesForRange(
     allConfigs,
     startFrom,
     endDate
@@ -129,10 +152,25 @@ export async function recomputeDerivedValues(config: EnergyConfig, options: Deri
       ? Number(point.min_real ?? 0)
       : Number(evaluateFormula(config.expression, context) ?? 0);
 
+    const finalValue = Number.isFinite(evaluated) ? evaluated : 0;
+
+    derivedValuesByTimestamp[timestampKey] ??= {};
+    derivedValuesByTimestamp[timestampKey][config.name] = finalValue;
+
+    if (shouldDebug(config.name, point.timestamp)) {
+      console.info('[DerivedDebug]', {
+        config: config.name,
+        timestamp: point.timestamp.toISOString(),
+        evaluated,
+        contextKeys: Object.keys(context),
+        min_real: point.min_real,
+      });
+    }
+
     return {
       configId: config.id,
       timestamp: point.timestamp,
-      value: Number.isFinite(evaluated) ? evaluated : 0,
+      value: finalValue,
     };
   });
 

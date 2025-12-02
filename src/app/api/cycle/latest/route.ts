@@ -1,36 +1,51 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { ensureCyclesUpToDate } from '@/lib/cycles';
+import type { Cycle, CyclePoint } from '@prisma/client';
 
 export const dynamic = 'force-dynamic';
 
-function serializeCycle(cycle: any) {
+type CycleWithPoints = Cycle & { points: CyclePoint[] };
+
+function serializeCycle(cycle: CycleWithPoints) {
   const start = cycle.startReal ? new Date(cycle.startReal).toISOString() : null;
-  const end = cycle.endReal ? new Date(cycle.endReal).toISOString() : null;
+  const endReal = cycle.endReal ? new Date(cycle.endReal).toISOString() : null;
   const dischargeTime = cycle.dischargeTime ? new Date(cycle.dischargeTime).toISOString() : null;
   const endEstimated = cycle.endEstimated ? new Date(cycle.endEstimated).toISOString() : null;
-  const durationHours =
-    start && end
-      ? (new Date(end).getTime() - new Date(start).getTime()) / (1000 * 3600)
+  const sobrecongelamientoHoras =
+    endReal && endEstimated
+      ? Math.max(
+          (new Date(endReal).getTime() - new Date(endEstimated).getTime()) / (1000 * 3600),
+          0,
+        )
+      : null;
+  const duracionCicloHoras =
+    !cycle.isCurrent && start && dischargeTime
+      ? Math.max(
+          (new Date(dischargeTime).getTime() - new Date(start).getTime()) / (1000 * 3600),
+          0,
+        )
       : null;
 
   return {
     id: cycle.id,
     start,
-    end,
+    end: endReal,
+    endReal,
     endEstimated,
-    durationHours,
     dischargeTime,
+    duracionCicloHoras,
+    sobrecongelamientoHoras,
     isCurrent: cycle.isCurrent ?? false,
     energyAccumulatedTotal: cycle.energyAccumulatedTotal ?? 0,
     activeTimeMinutes: cycle.activeTimeMinutes ?? null,
     overfrozenTimeMinutes: cycle.overfrozenTimeMinutes ?? null,
     setPoint: cycle.setPoint ?? null,
-    points: (cycle.points || []).map((point: any) => {
+    points: (cycle.points || []).map((point) => {
       let ts: string | null = null;
       try {
         if (point && point.timestamp) ts = new Date(point.timestamp).toISOString();
-      } catch (e) {
+      } catch {
         // keep ts null
       }
       return {

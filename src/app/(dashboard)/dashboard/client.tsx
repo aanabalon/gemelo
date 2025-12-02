@@ -388,7 +388,7 @@ export function DashboardClient() {
   // [WALKTHROUGH] mergedGlobalWithCycleEnergy: dataset final para el gráfico superior
   // Fuente: mergedGlobalData, que ya tiene energyAccumulated acumulada correctamente
   // Si hay ciclos, se puede ajustar por ciclo, pero la energía acumulada ya está bien
-  const mergedGlobalWithCycleEnergy = useMemo(() => {
+  const mergedGlobalWithCycleEnergy = useMemo<any[]>(() => {
     // [DEBUG] Muestra los primeros 5 puntos para depuración
     console.log('[DEBUG][GlobalEnergy] sample', mergedGlobalData.slice(0, 5));
 

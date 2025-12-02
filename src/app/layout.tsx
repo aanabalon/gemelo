@@ -3,6 +3,7 @@ import { Inter } from "next/font/google";
 import "./globals.css";
 import { Toaster } from "@/components/ui/sonner";
 import { startDerivedValuePoller } from "@/lib/jobs/derivedValuePoller";
+import { startCycleProcessingPoller } from "@/lib/jobs/cycleProcessingPoller";
 
 const inter = Inter({ subsets: ["latin"] });
 
@@ -13,6 +14,7 @@ export const metadata: Metadata = {
 
 if (typeof window === "undefined") {
   startDerivedValuePoller();
+  startCycleProcessingPoller();
 }
 
 export default function RootLayout({

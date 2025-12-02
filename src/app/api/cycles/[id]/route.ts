@@ -20,6 +20,7 @@ export async function GET(request: NextRequest, context: { params: Promise<{ id:
 
         return NextResponse.json(cycle);
     } catch (error) {
+        console.error('Failed to fetch cycle by id', error);
         return NextResponse.json({ error: 'Failed to fetch cycle' }, { status: 500 });
     }
 }

@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
 import { ensureCyclesUpToDate } from '@/lib/cycles';
 
 /**
@@ -10,7 +10,7 @@ import { ensureCyclesUpToDate } from '@/lib/cycles';
  *  - Llama a ensureCyclesUpToDate() que encapsula la lógica de high watermark.
  */
 
-export async function GET(req: NextRequest) {
+export async function GET() {
     try {
         const result = await ensureCyclesUpToDate();
 

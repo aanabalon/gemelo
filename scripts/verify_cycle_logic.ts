@@ -1,17 +1,19 @@
 
 // Mock of the buildCyclePoints function from src/lib/cycles.ts (before fix)
+type TestPoint = {
+    timestamp: Date;
+    serpTemp: number;
+    doorTemp: number;
+    operationState: number;
+    energyInstant: number;
+};
+
 function buildCyclePointsOld(
-    slice: Array<{
-        timestamp: Date;
-        serpTemp: number;
-        doorTemp: number;
-        operationState: number;
-        energyInstant: number;
-    }>
+    slice: Array<TestPoint>
 ) {
     if (!slice.length) return [];
     let accumulatedEnergy = 0;
-    const points: any[] = [];
+    const points: Array<{ timestamp: Date; energyInstant: number; energyAccumulated: number }> = [];
 
     for (let i = 0; i < slice.length; i++) {
         const point = slice[i];
@@ -34,17 +36,11 @@ function buildCyclePointsOld(
 
 // Mock of the buildCyclePoints function (after fix - expected behavior)
 function buildCyclePointsNew(
-    slice: Array<{
-        timestamp: Date;
-        serpTemp: number;
-        doorTemp: number;
-        operationState: number;
-        energyInstant: number;
-    }>
+    slice: Array<TestPoint>
 ) {
     if (!slice.length) return [];
     let accumulatedEnergy = 0;
-    const points: any[] = [];
+    const points: Array<{ timestamp: Date; energyInstant: number; energyAccumulated: number }> = [];
 
     for (let i = 0; i < slice.length; i++) {
         const point = slice[i];

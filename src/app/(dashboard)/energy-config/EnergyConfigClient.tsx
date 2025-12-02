@@ -12,10 +12,18 @@ import { Textarea } from '@/components/ui/textarea';
 import { Switch } from '@/components/ui/switch';
 import { Plus, Edit } from 'lucide-react';
 
+type EnergyConfig = {
+    id: string;
+    name: string;
+    description?: string | null;
+    expression: string;
+    enabled: boolean;
+};
+
 export function EnergyConfigClient() {
-    const [configs, setConfigs] = useState<any[]>([]);
+    const [configs, setConfigs] = useState<EnergyConfig[]>([]);
     const [isOpen, setIsOpen] = useState(false);
-    const [editingConfig, setEditingConfig] = useState<any>(null);
+    const [editingConfig, setEditingConfig] = useState<EnergyConfig | null>(null);
     const [enabledState, setEnabledState] = useState<boolean>(true);
     const [expressionValue, setExpressionValue] = useState<string>('');
     const [recomputeLoading, setRecomputeLoading] = useState(false);
@@ -25,7 +33,7 @@ export function EnergyConfigClient() {
     const fetchConfigs = useCallback(() => {
         fetch('/api/config/energy')
             .then(res => res.json())
-            .then(setConfigs);
+            .then((data: EnergyConfig[]) => setConfigs(Array.isArray(data) ? data : []));
     }, []);
 
     const fetchInfluxFields = useCallback(async () => {
@@ -99,7 +107,7 @@ export function EnergyConfigClient() {
         }
     };
 
-    const openEdit = (config: any) => {
+    const openEdit = (config: EnergyConfig) => {
         setEditingConfig(config);
         setEnabledState(config?.enabled ?? true);
         setIsOpen(true);
@@ -157,19 +165,19 @@ export function EnergyConfigClient() {
     const derivedVariableOptions = useMemo(
         () =>
             configs.filter(
-                (cfg: any) =>
+                (cfg: EnergyConfig) =>
                     cfg.enabled && (!editingConfig || cfg.id !== editingConfig.id)
             ),
         [configs, editingConfig]
     );
 
     const influxFieldOptions = useMemo(() => {
-        const derivedNames = new Set(configs.map((cfg: any) => cfg.name));
+        const derivedNames = new Set(configs.map((cfg) => cfg.name));
         return influxFields.filter((field) => !derivedNames.has(field));
     }, [influxFields, configs]);
 
     const getDisplayName = useCallback(
-        (config: any) => (config?.description ? config.description : config?.name ?? ''),
+        (config: EnergyConfig | null) => (config?.description ? config.description : config?.name ?? ''),
         []
     );
 
@@ -282,7 +290,11 @@ export function EnergyConfigClient() {
                             </div>
                             <div className="grid gap-2">
                                 <Label htmlFor="description">Descripción</Label>
-                                <Input id="description" name="description" defaultValue={editingConfig?.description} />
+                                <Input
+                                    id="description"
+                                    name="description"
+                                    defaultValue={editingConfig?.description ?? ''}
+                                />
                             </div>
                             <div className="flex items-center space-x-2">
                                 <Switch

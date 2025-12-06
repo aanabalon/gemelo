@@ -12,13 +12,6 @@ enum Role {
   ADMIN
 }
 
-enum NotificationEventType {
-  CYCLE_STARTED
-  SETPOINT_REACHED
-  CYCLE_COMPLETED
-  SETPOINT_PERCENT
-}
-
 model User {
   id        String   @id @default(uuid())
   email     String   @unique
@@ -29,32 +22,32 @@ model User {
 }
 
 model Cycle {
-  id                     Int       @id @default(autoincrement())
-  tunnelId               String    @default("tunnel-9") // For future multi-tunnel support
+  id                     Int          @id @default(autoincrement())
+  tunnelId               String       @default("tunnel-1") // For future multi-tunnel support
   startReal              DateTime
   endReal                DateTime?
   endEstimated           DateTime?
   dischargeTime          DateTime?
-  isCurrent              Boolean   @default(false)
-  energyAccumulatedTotal Float     @default(0)
-  setPoint               Float     @default(0)
-
+  isCurrent              Boolean      @default(false)
+  energyAccumulatedTotal Float        @default(0)
+  setPoint               Float        @default(0)
+  
   // Calculated aggregates for quick access
-  avgSerpentinTotal     Float?
-  avgDoorTotal          Float?
-  activeTimeMinutes     Float?
-  overfrozenTimeMinutes Float?
+  avgSerpentinTotal      Float?
+  avgDoorTotal           Float?
+  activeTimeMinutes      Float?
+  overfrozenTimeMinutes  Float?
+  
+  points                 CyclePoint[]
 
-  points CyclePoint[]
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt              DateTime     @default(now())
+  updatedAt              DateTime     @updatedAt
 }
 
 model CyclePoint {
-  cycleId   Int
-  cycle     Cycle    @relation(fields: [cycleId], references: [id], onDelete: Cascade)
-  timestamp DateTime
+  cycleId            Int
+  cycle              Cycle    @relation(fields: [cycleId], references: [id], onDelete: Cascade)
+  timestamp          DateTime
 
   avgSerpentin       Float
   avgDoor            Float
@@ -68,15 +61,15 @@ model CyclePoint {
 }
 
 model EnergyConfig {
-  id              String               @id @default(uuid())
-  name            String               @unique
-  expression      String
-  description     String?
-  enabled         Boolean              @default(true)
+  id          String   @id @default(uuid())
+  name        String   @unique
+  expression  String
+  description String?
+  enabled     Boolean  @default(true)
   lastProcessedAt DateTime?
-  derivedValues   EnergyDerivedValue[]
-  createdAt       DateTime             @default(now())
-  updatedAt       DateTime             @updatedAt
+  derivedValues EnergyDerivedValue[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 }
 
 model EnergyDerivedValue {
@@ -91,48 +84,28 @@ model EnergyDerivedValue {
   @@index([timestamp])
 }
 
+model CycleLogicConfig {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  expression  String
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
 model VariableValue {
-  id           Int      @id @default(autoincrement())
-  variableId   String // EnergyConfig.id
-  variableName String // EnergyConfig.name (for easier lookup)
-  timestamp    DateTime
-  value        Float?
-  createdAt    DateTime @default(now())
+  id          Int      @id @default(autoincrement())
+  variableId  String   // EnergyConfig.id
+  variableName String  // EnergyConfig.name (for easier lookup)
+  timestamp   DateTime
+  value       Float?
+  createdAt   DateTime @default(now())
 
   @@index([variableName])
   @@index([timestamp])
 }
 
 model CycleProcessingState {
-  id                     Int       @id @default(1)
+  id                     Int      @id @default(1)
   lastProcessedTimestamp DateTime?
-}
-
-model NotificationRule {
-  id                  Int                   @id @default(autoincrement())
-  name                String?
-  tunnelId            String                @default("tunnel-9")
-  event               NotificationEventType
-  enabled             Boolean               @default(true)
-  recipients          String[]
-  percentageThreshold Float?
-  createdAt           DateTime              @default(now())
-  updatedAt           DateTime              @updatedAt
-  logs                NotificationLog[]
-
-  @@unique([event, tunnelId])
-}
-
-model NotificationLog {
-  id                  Int                   @id @default(autoincrement())
-  ruleId              Int
-  cycleId             Int?
-  tunnelId            String
-  cycleStart          DateTime
-  event               NotificationEventType
-  percentageThreshold Float?
-  sentAt              DateTime              @default(now())
-  rule                NotificationRule      @relation(fields: [ruleId], references: [id], onDelete: Cascade)
-
-  @@unique([ruleId, tunnelId, cycleStart])
 }

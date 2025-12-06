@@ -41,7 +41,6 @@ export async function POST(request: Request) {
     operationStartValue: Number(body.operationStartValue),
     operationEndValue: Number(body.operationEndValue),
     cycleEnergySetPoint: Number(body.cycleEnergySetPoint),
-    minOperationZeroMinutesForEndReal: Number(body.minOperationZeroMinutesForEndReal),
   };
 
   const config = await writeCycleLogicConfig(parsed);

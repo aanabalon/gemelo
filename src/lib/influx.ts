@@ -1,4 +1,4 @@
-import { InfluxDB, FluxTableMetaData } from '@influxdata/influxdb-client';
+import { InfluxDB } from '@influxdata/influxdb-client';
 
 import fs from 'fs';
 import path from 'path';
@@ -28,7 +28,7 @@ export function getInfluxConfig() {
     return config;
 }
 
-let queryApi: ReturnType<InfluxDB['getQueryApi']> | null = null;
+let queryApi: any = null;
 
 function getQueryApiInstance() {
     if (queryApi) return queryApi;
@@ -77,7 +77,7 @@ export interface MappedDataPoint {
  * Fetches raw data from InfluxDB for a given time range.
  * Pivots fields to columns for easier processing.
  */
-export async function fetchRawData(start: Date, end: Date, previousTimestamp?: Date | number): Promise<MappedDataPoint[]> {
+export async function fetchRawData(start: Date, end: Date): Promise<MappedDataPoint[]> {
     // InfluxFlux query to get data, filter by measurement and fields, and pivot
     console.info(`[Influx] fetch range: ${start.toISOString()} → ${end.toISOString()}`);
     const fluxQuery = `
@@ -95,7 +95,7 @@ export async function fetchRawData(start: Date, end: Date, previousTimestamp?: D
 
     return new Promise((resolve, reject) => {
         getQueryApiInstance().queryRows(fluxQuery, {
-            next(row: string[], tableMeta: FluxTableMetaData) {
+            next(row: any, tableMeta: any) {
                 const o = tableMeta.toObject(row);
                 // Convert _time to Date object
                 const timestamp = new Date(o._time);
@@ -106,31 +106,29 @@ export async function fetchRawData(start: Date, end: Date, previousTimestamp?: D
 
                 for (const key of Object.keys(o)) {
                     if (!['_start', '_stop', '_time', 'result', 'table', '_measurement'].includes(key)) {
-                        point[key] = o[key] as number | Date | undefined;
+                        point[key] = o[key];
                     }
                 }
                 rows.push(point);
             },
-            error(error: unknown) {
+            error(error: any) {
                 console.error('InfluxDB query error:', error);
                 reject(error);
             },
             complete() {
-                annotateWithRealMinuteIntervals(rows, previousTimestamp);
+                annotateWithRealMinuteIntervals(rows);
                 resolve(rows);
             },
         });
     });
 }
 
-function annotateWithRealMinuteIntervals(points: MappedDataPoint[], initialPreviousTimestamp?: Date | number) {
+function annotateWithRealMinuteIntervals(points: MappedDataPoint[]) {
     if (!points.length) return;
 
     points.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
 
-    let previousTimestamp: number | null = initialPreviousTimestamp
-        ? (typeof initialPreviousTimestamp === 'number' ? initialPreviousTimestamp : initialPreviousTimestamp.getTime())
-        : null;
+    let previousTimestamp: number | null = null;
 
     for (const point of points) {
         const currentTimestamp = point.timestamp.getTime();
@@ -157,12 +155,12 @@ export async function fetchEarliestRawTimestamp(): Promise<Date | null> {
     return new Promise((resolve, reject) => {
         let earliest: Date | null = null;
         getQueryApiInstance().queryRows(fluxQuery, {
-            next(row: string[], tableMeta: FluxTableMetaData) {
+            next(row: any, tableMeta: any) {
                 if (earliest) return;
                 const o = tableMeta.toObject(row);
-                earliest = new Date(o._time as string);
+                earliest = new Date(o._time);
             },
-            error(error: unknown) {
+            error(error: any) {
                 console.error('InfluxDB query error:', error);
                 reject(error);
             },

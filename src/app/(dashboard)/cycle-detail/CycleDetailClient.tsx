@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { format } from 'date-fns';
 import { toast } from 'sonner';
 import {
@@ -17,7 +17,6 @@ import {
   Legend,
   ChartOptions,
   ChartData,
-  DefaultDataPoint,
 } from 'chart.js';
 import 'chartjs-adapter-date-fns';
 import { Line } from 'react-chartjs-2';
@@ -49,11 +48,9 @@ interface CycleDetail {
   displayIndex?: number;
   start: string | null;
   end: string | null;
-  endReal?: string | null;
   endEstimated: string | null;
   isCurrent: boolean;
-  duracionCicloHoras?: number | null;
-  sobrecongelamientoHoras?: number | null;
+  durationHours: number;
   dischargeTime: string | null;
   energyAccumulatedTotal: number;
   activeTimeMinutes: number | null;
@@ -76,8 +73,7 @@ export function CycleDetailClient() {
   const [setPointConfig, setSetPointConfig] = useState<number | null>(null);
   const [status, setStatus] = useState<CycleStatus | null>(null);
   const prevPhase = useRef<'idle' | 'running' | 'ready'>('idle');
-  type LineChartDataPoint = DefaultDataPoint<'line'>;
-  const chartRef = useRef<ChartJS<'line', LineChartDataPoint, unknown> | null>(null);
+  const chartRef = useRef<any>(null);
 
   // Register zoom plugin when component mounts
   useEffect(() => {
@@ -85,7 +81,7 @@ export function CycleDetailClient() {
       .then((mod) => {
         try {
           ChartJS.register(mod.default);
-        } catch {
+        } catch (e) {
           // already registered
         }
       })
@@ -98,35 +94,6 @@ export function CycleDetailClient() {
     typeof setPointConfig === 'number' && setPointConfig > 0
       ? setPointConfig
       : null;
-
-  const accumulatedEnergyValue = useMemo(() => {
-    if (!cycle) return null;
-    const totalFromApi =
-      typeof cycle.energyAccumulatedTotal === 'number' && Number.isFinite(cycle.energyAccumulatedTotal)
-        ? cycle.energyAccumulatedTotal
-        : null;
-    const lastPointAccum =
-      cycle.points && cycle.points.length > 0
-        ? cycle.points[cycle.points.length - 1].energyAccumulated
-        : null;
-    const fallback = Number.isFinite(lastPointAccum) ? Number(lastPointAccum) : null;
-    return totalFromApi ?? fallback;
-  }, [cycle]);
-
-  const cycleSetPointTarget = useMemo(() => {
-    if (cycle && typeof cycle.setPoint === 'number' && Number.isFinite(cycle.setPoint) && cycle.setPoint > 0) {
-      return cycle.setPoint;
-    }
-    if (displaySetPoint && displaySetPoint > 0) {
-      return displaySetPoint;
-    }
-    return null;
-  }, [cycle, displaySetPoint]);
-
-  const reachedEnergySetPoint =
-    cycleSetPointTarget !== null &&
-    accumulatedEnergyValue !== null &&
-    accumulatedEnergyValue >= cycleSetPointTarget;
 
   const fetchLatest = useCallback(async () => {
     setLoading(true);
@@ -146,7 +113,7 @@ export function CycleDetailClient() {
         return;
       }
       setCycle(data.cycle);
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error fetching latest cycle:', err);
       setCycle(null);
       setError('No se pudo cargar el ciclo actual');
@@ -225,7 +192,7 @@ export function CycleDetailClient() {
   const chartData = useMemo<ChartData<'line'> | null>(() => {
     if (!cycle) return null;
 
-    const datasets: ChartData<'line'>['datasets'] = [
+    const datasets: any[] = [
       {
         label: 'Promedio Serpentín',
         borderColor: '#1D4ED8',
@@ -377,7 +344,7 @@ export function CycleDetailClient() {
   const handleResetZoom = () => {
     try {
       chartRef.current?.resetZoom?.();
-    } catch {
+    } catch (e) {
       // ignore
     }
   };
@@ -439,9 +406,7 @@ export function CycleDetailClient() {
                 <div>
                   <p className="text-xs text-muted-foreground">Fin Real</p>
                   <p className="text-base font-medium">
-                    {(cycle.endReal ?? cycle.end)
-                      ? format(new Date(cycle.endReal ?? cycle.end!), 'dd/MM/yyyy HH:mm')
-                      : '—'}
+                    {cycle.end ? format(new Date(cycle.end), 'dd/MM/yyyy HH:mm') : 'En curso'}
                   </p>
                 </div>
                 <div>
@@ -467,16 +432,14 @@ export function CycleDetailClient() {
               <CardHeader className="py-2 px-3">
                 <CardTitle className="text-sm">
                   Detalle del Ciclo {cycle.displayIndex || cycle.id}
-                  {(!cycle.endReal && !cycle.end) && <Badge className="ml-2">En curso</Badge>}
+                  {cycle.end === null && <Badge className="ml-2">En curso</Badge>}
                 </CardTitle>
               </CardHeader>
               <CardContent className="p-2 grid gap-3 sm:grid-cols-2">
                 <div>
-                  <p className="text-xs text-muted-foreground">Sobrecongelamiento</p>
+                  <p className="text-xs text-muted-foreground">Tiempo Fin Real</p>
                   <p className="text-base font-medium">
-                    {typeof cycle.sobrecongelamientoHoras === 'number'
-                      ? (cycle.sobrecongelamientoHoras > 0 ? `${cycle.sobrecongelamientoHoras.toFixed(2)} h` : '—')
-                      : '—'}
+                    {cycle.durationHours ? `${cycle.durationHours.toFixed(2)} h` : '—'}
                   </p>
                 </div>
                 <div>
@@ -494,10 +457,10 @@ export function CycleDetailClient() {
                   </p>
                 </div>
                 <div>
-                  <p className="text-xs text-muted-foreground">Duración del ciclo</p>
+                  <p className="text-xs text-muted-foreground">Tiempo Total</p>
                   <p className="text-base font-medium">
-                    {typeof cycle.duracionCicloHoras === 'number'
-                      ? (cycle.duracionCicloHoras > 0 ? `${cycle.duracionCicloHoras.toFixed(2)} h` : '—')
+                    {cycle.start && cycle.dischargeTime
+                      ? `${((new Date(cycle.dischargeTime).getTime() - new Date(cycle.start).getTime()) / (1000 * 3600)).toFixed(2)} h`
                       : '—'}
                   </p>
                 </div>
@@ -510,39 +473,30 @@ export function CycleDetailClient() {
                 <CardTitle className="text-sm">Energía</CardTitle>
               </CardHeader>
               <CardContent className="p-2 grid gap-3 sm:grid-cols-2">
-                <div
-                  className={`rounded-lg border p-3 ${
-                    reachedEnergySetPoint
-                      ? 'bg-emerald-100 border-emerald-300'
-                      : 'bg-muted/30 border-transparent'
-                  }`}
-                >
-                  <div className="flex items-center justify-between">
-                    <p className={`text-xs ${reachedEnergySetPoint ? 'text-emerald-700' : 'text-muted-foreground'}`}>
-                      Acumulada
-                    </p>
-                    {reachedEnergySetPoint ? (
-                      <Badge className="bg-emerald-600 text-white hover:bg-emerald-600/90">
-                        Set point alcanzado
-                      </Badge>
-                    ) : null}
-                  </div>
-                  <p
-                    className={`text-base font-medium ${
-                      reachedEnergySetPoint ? 'text-emerald-900' : 'text-slate-900'
-                    }`}
-                  >
-                    {accumulatedEnergyValue !== null
-                      ? `${Number(accumulatedEnergyValue).toFixed(2)} kWh`
-                      : '—'}
+                <div>
+                  <p className="text-xs text-muted-foreground">Acumulada</p>
+                  <p className="text-base font-medium">
+                    {(() => {
+                      // Prefer explicit total from API/DB when available (finite number).
+                      // For open/current cycles the DB value may be missing or stale,
+                      // so fall back to the last point's energyAccumulated if present.
+                      const totalFromApi = Number.isFinite(cycle.energyAccumulatedTotal)
+                        ? cycle.energyAccumulatedTotal
+                        : null;
+                      const lastPointAccum = cycle.points && cycle.points.length > 0
+                        ? cycle.points[cycle.points.length - 1].energyAccumulated
+                        : null;
+                      const value = totalFromApi ?? (Number.isFinite(lastPointAccum) ? lastPointAccum : null);
+                      return value !== null && value !== undefined
+                        ? `${Number(value).toFixed(2)} kWh`
+                        : '—';
+                    })()}
                   </p>
                 </div>
                 <div>
-                  <p className="text-xs text-muted-foreground">Sobrecongelamiento (h)</p>
+                  <p className="text-xs text-muted-foreground">Sobrecongelamiento</p>
                   <p className="text-base font-medium text-orange-600">
-                    {typeof cycle.sobrecongelamientoHoras === 'number'
-                      ? (cycle.sobrecongelamientoHoras > 0 ? `${cycle.sobrecongelamientoHoras.toFixed(2)} h` : '—')
-                      : '—'}
+                    {(cycle.energyAccumulatedTotal !== undefined && cycle.setPoint) ? (() => { const excess = Math.max(0, cycle.energyAccumulatedTotal - cycle.setPoint); return excess > 0 ? `${excess.toFixed(2)} kWh` : '—'; })() : '—'}
                   </p>
                 </div>
                 {displaySetPoint && (
@@ -585,13 +539,7 @@ export function CycleDetailClient() {
                     </Button>
                   </div>
                   {chartData ? (
-                    <Line
-                      ref={(instance) => {
-                        chartRef.current = instance ?? null;
-                      }}
-                      data={chartData}
-                      options={chartOptions}
-                    />
+                    <Line ref={chartRef} data={chartData} options={chartOptions} />
                   ) : (
                     <div className="flex h-full items-center justify-center text-muted-foreground">
                       No hay datos para graficar.

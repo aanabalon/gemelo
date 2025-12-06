@@ -9,7 +9,7 @@ export default function FormulaEditorClient() {
   const [limit, setLimit] = useState(50);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [values, setValues] = useState<Array<{ timestamp: string; value: number | null }>>([]);
+  const [values, setValues] = useState<Array<{ timestamp: string; value: any }>>([]);
 
   async function onPreview(e?: React.FormEvent) {
     if (e) e.preventDefault();
@@ -28,8 +28,8 @@ export default function FormulaEditorClient() {
       } else {
         setValues(data.values || []);
       }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+    } catch (err: any) {
+      setError(err?.message || String(err));
     } finally {
       setLoading(false);
     }

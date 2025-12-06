@@ -17,7 +17,6 @@ export async function GET() {
         // Return in reverse order (newest first) for dashboard display
         return NextResponse.json(cyclesWithDisplayIndex.reverse());
     } catch (error) {
-        console.error('Failed to fetch cycles', error);
         return NextResponse.json({ error: 'Failed to fetch cycles' }, { status: 500 });
     }
 }

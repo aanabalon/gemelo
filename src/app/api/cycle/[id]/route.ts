@@ -17,12 +17,13 @@ export async function GET(
     }
 
     const numericId = Number(rawId);
-    if (!Number.isInteger(numericId) || numericId <= 0) {
-      return NextResponse.json({ error: 'Invalid cycle id' }, { status: 400 });
-    }
+    const where =
+      Number.isNaN(numericId) || rawId.length > 15
+        ? ({ id: rawId } as any)
+        : ({ id: numericId } as any);
 
     const cycle = await prisma.cycle.findUnique({
-      where: { id: numericId },
+      where,
       include: {
         points: {
           orderBy: { timestamp: 'asc' },
@@ -35,22 +36,11 @@ export async function GET(
     }
 
     const start = toIso(cycle.startReal);
-    const endReal = toIso(cycle.endReal);
+    const end = toIso(cycle.endReal);
     const dischargeTime = toIso(cycle.dischargeTime);
-    const endEstimated = toIso(cycle.endEstimated);
-    const sobrecongelamientoHoras =
-      endReal && endEstimated
-        ? Math.max(
-            (new Date(endReal).getTime() - new Date(endEstimated).getTime()) / (1000 * 3600),
-            0,
-          )
-        : null;
-    const duracionCicloHoras =
-      !cycle.isCurrent && start && dischargeTime
-        ? Math.max(
-            (new Date(dischargeTime).getTime() - new Date(start).getTime()) / (1000 * 3600),
-            0,
-          )
+    const durationHours =
+      start && end
+        ? (new Date(end).getTime() - new Date(start).getTime()) / (1000 * 3600)
         : null;
 
     const points = cycle.points.map((point) => ({
@@ -64,12 +54,10 @@ export async function GET(
     return NextResponse.json({
       id: cycle.id,
       start,
-      end: endReal,
-      endReal,
-      endEstimated,
+      end,
+      endEstimated: toIso(cycle.endEstimated),
+      durationHours,
       dischargeTime,
-      duracionCicloHoras,
-      sobrecongelamientoHoras,
       energyAccumulatedTotal: cycle.energyAccumulatedTotal ?? 0,
       activeTimeMinutes: cycle.activeTimeMinutes,
       overfrozenTimeMinutes: cycle.overfrozenTimeMinutes,

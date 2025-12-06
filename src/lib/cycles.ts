@@ -1,4 +1,4 @@
-import { Cycle, Prisma } from '@prisma/client';
+import { Cycle } from '@prisma/client';
 import { fetchRawData, fetchEarliestRawTimestamp, MappedDataPoint } from './influx';
 import { prisma } from '@/lib/prisma';
 import { loadDerivedValuesByNames } from '@/lib/energy/loadDerivedValuesForRange';
@@ -6,40 +6,6 @@ import {
     CycleLogicConfig,
     readCycleLogicConfig,
 } from '@/lib/cycleLogicConfig';
-import { triggerCycleNotifications } from '@/lib/notifications/notifier';
-
-type CyclePointResult = {
-    timestamp: Date;
-    avgSerpentin: number;
-    avgDoor: number;
-    operationState: number;
-    energyInstant: number;
-    energyAccumulated: number;
-    hourFromCycleStart: number;
-};
-
-type ProcessedPoint = {
-    timestamp: Date;
-    serpTemp: number;
-    doorTemp: number;
-    operationState: number;
-    energyInstant: number;
-    minRealMinutes: number;
-};
-
-type CycleDraft = {
-    tunnelId: string;
-    startReal: Date;
-    endReal: Date | null;
-    isCurrent: boolean;
-    energyAccumulatedTotal: number;
-    setPoint: number;
-    descargaSiguiente?: Date;
-    points: CyclePointResult[];
-    endEstimated?: Date;
-    activeTimeMinutes?: number;
-    overfrozenTimeMinutes?: number;
-};
 
 /**
  * Main function to process data and detect cycles.
@@ -49,25 +15,18 @@ type CycleDraft = {
  * @param end Date to end processing
  * @param recalculate If true, wipes existing cycles in the range and re-processes
  */
-export interface ProcessCyclesResult {
-    start: Date;
-    end: Date;
-    descargasCount: number;
-    cyclesCreated: number;
-    closedCycles: number;
-    openCycles: number;
-}
-
 export async function processCycles(
     start: Date,
     end: Date,
     recalculate: boolean = false,
     logicOverrides?: CycleLogicConfig
-): Promise<ProcessCyclesResult | void> {
+) {
     if (recalculate) {
         // Wipe existing cycles and points in range (or all if full recalc)
+        // For simplicity in this MVP, we might wipe all if recalculating logic globally
         await prisma.cyclePoint.deleteMany({});
         await prisma.cycle.deleteMany({});
+        // Reset sequence if possible, or just let it auto-increment
     }
 
     const config = logicOverrides ?? (await readCycleLogicConfig());
@@ -77,6 +36,30 @@ export async function processCycles(
     if (effectiveStart >= end) {
         console.warn('[Cycles] Rango inválido para procesamiento de ciclos.');
         return;
+    }
+
+    // Para ejecuciones incrementales (recalculate=false), hacemos que el proceso
+    // sea idempotente: antes de guardar, limpiamos los ciclos existentes en el
+    // rango que vamos a recalcular, para no duplicarlos.
+    if (!recalculate) {
+        await prisma.cyclePoint.deleteMany({
+            where: {
+                cycle: {
+                    startReal: {
+                        gte: effectiveStart,
+                        lt: end,
+                    },
+                },
+            },
+        });
+        await prisma.cycle.deleteMany({
+            where: {
+                startReal: {
+                    gte: effectiveStart,
+                    lt: end,
+                },
+            },
+        });
     }
 
     // 2. Fetch Raw Data en ventanas para evitar timeouts
@@ -96,7 +79,6 @@ export async function processCycles(
 
         const opStateRaw = context['Operacion'] ?? context['Estado_Operacion'];
         const energyRaw = context['Energia'] ?? context['Energia_Instantanea'];
-        const minRealRaw = context['min_real'];
 
         // If critical data is missing, skip this point to avoid false positives (e.g. 0°C spikes or 0 energy)
         if (serpTempRaw === undefined || serpTempRaw === null ||
@@ -109,120 +91,28 @@ export async function processCycles(
         const doorTemp = Number(doorTempRaw ?? 0);
         const operationState = Number(opStateRaw);
         const energyInstant = Number(energyRaw);
-        const minRealMinutes = Number.isFinite(Number(minRealRaw))
-            ? Number(minRealRaw)
-            : Number(point.min_real ?? 0) || 0;
         return {
             timestamp: point.timestamp,
             serpTemp,
             doorTemp,
             operationState,
             energyInstant,
-            minRealMinutes,
         };
     }).filter((p): p is NonNullable<typeof p> => p !== null);
 
     if (!points.length) return;
 
     const descargas = detectDescargas(points, config);
-    if (!descargas.length) {
-        // If no descargas found, we should ensure no cycles exist in this range (except maybe one starting before)
-        // But for safety in this "sync" logic, if we found nothing, we might need to clear cycles that started here.
-        if (!recalculate) {
-            await prisma.cycle.deleteMany({
-                where: {
-                    startReal: { gte: effectiveStart, lt: end }
-                }
-            });
-        }
-        return { start: effectiveStart, end, descargasCount: 0, cyclesCreated: 0, closedCycles: 0, openCycles: 0 };
+    if (descargas.length < 2) {
+        console.warn('No se pudieron detectar descargas reales con los criterios definidos.');
+        return;
     }
 
-    const newCyclesDrafts = buildCyclesFromDescargas(points, descargas, config);
+    const cycles = buildCyclesFromDescargas(points, descargas, config);
 
-    // --- SYNC STRATEGY ---
-    // Instead of deleting all, we fetch existing cycles starting in [effectiveStart, end)
-    // and match them with newCyclesDrafts by startReal.
-
-    const existingCycles = await prisma.cycle.findMany({
-        where: {
-            startReal: {
-                gte: effectiveStart,
-                lt: end,
-            },
-        },
-        // points not needed for matching
-    });
-
-    let cyclesCreated = 0;
-    let cyclesUpdated = 0;
-    let closedCycles = 0;
-    let openCycles = 0;
-
-    // Helper to find a match with tolerance (e.g. same second)
-    const findMatch = (draft: CycleDraft) => {
-        return existingCycles.find(ex => Math.abs(ex.startReal.getTime() - draft.startReal.getTime()) < 1000);
-    };
-
-    const processedCycleIds = new Set<number>();
-
-    for (const draft of newCyclesDrafts) {
-        const match = findMatch(draft);
-
-        let savedCycle: Cycle | null = null;
-
-        if (match) {
-            if (match.endReal && draft.endReal && match.endReal.getTime() !== draft.endReal.getTime()) {
-                draft.endReal = match.endReal;
-            } else if (match.endReal && !draft.endReal) {
-                draft.endReal = match.endReal;
-            }
-            // UPDATE existing cycle
-            processedCycleIds.add(match.id);
-            savedCycle = await updateCycle(match.id, draft, draft.points);
-            if (savedCycle) cyclesUpdated++;
-        } else {
-            // CREATE new cycle
-            savedCycle = await saveCycle(draft, draft.points);
-            if (savedCycle) cyclesCreated++;
-        }
-
-        if (savedCycle) {
-            if (savedCycle.isCurrent) {
-                openCycles++;
-            } else if (savedCycle.endReal) {
-                closedCycles++;
-            }
-            // Trigger notifications only if it's a new cycle or significant status change?
-            // For now, keep existing behavior (trigger on save/update might be noisy if not careful, 
-            // but `triggerCycleNotifications` usually handles idempotency or we accept it).
-            try {
-                await triggerCycleNotifications(savedCycle, draft.points);
-            } catch (error) {
-                console.error('[Cycles] Failed to trigger notifications', { cycleId: savedCycle.id, error });
-            }
-        }
+    for (const cycle of cycles) {
+        await saveCycle(cycle, cycle.points);
     }
-
-    // Delete cycles that exist in DB but were NOT found in the new calculation (ghosts)
-    const cyclesToDelete = existingCycles.filter(c => !processedCycleIds.has(c.id));
-    if (cyclesToDelete.length > 0) {
-        await prisma.cycle.deleteMany({
-            where: {
-                id: { in: cyclesToDelete.map(c => c.id) }
-            }
-        });
-        console.log(`[Cycles] Deleted ${cyclesToDelete.length} ghost cycles.`);
-    }
-
-    return {
-        start: effectiveStart,
-        end,
-        descargasCount: descargas.length,
-        cyclesCreated,
-        closedCycles,
-        openCycles,
-    };
 }
 
 const CHUNK_HOURS = 24 * 7; // una semana por consulta para evitar timeouts
@@ -270,7 +160,7 @@ async function resolveAvailableStart(requestedStart: Date): Promise<Date> {
     return new Date(effective);
 }
 
-export function detectDescargas(
+function detectDescargas(
     points: Array<{ timestamp: Date; serpTemp: number }>,
     config: CycleLogicConfig
 ): Date[] {
@@ -332,12 +222,30 @@ export function detectDescargas(
     return descargas;
 }
 
-export function buildCyclesFromDescargas(
-    points: ProcessedPoint[],
+function buildCyclesFromDescargas(
+    points: Array<{
+        timestamp: Date;
+        serpTemp: number;
+        doorTemp: number;
+        operationState: number;
+        energyInstant: number;
+    }>,
     descargas: Date[],
     config: CycleLogicConfig
 ) {
-    const cycles: CycleDraft[] = [];
+    const cycles: Array<{
+        tunnelId: string;
+        startReal: Date;
+        endReal: Date | null;
+        isCurrent: boolean;
+        energyAccumulatedTotal: number;
+        setPoint: number;
+        descargaSiguiente?: Date;
+        points: any[];
+        endEstimated?: Date;
+        activeTimeMinutes?: number;
+        overfrozenTimeMinutes?: number;
+    }> = [];
 
     // Filter descargas to ignore noise (intervals shorter than minCycleHours)
     const validDescargas: Date[] = [];
@@ -402,7 +310,7 @@ export function buildCyclesFromDescargas(
         const metrics = calculateCycleMetrics(slice, config, endPoint.timestamp);
 
         cycles.push({
-            tunnelId: 'tunnel-9',
+            tunnelId: 'tunnel-1',
             startReal: startPoint.timestamp,
             endReal: endPoint.timestamp,
             isCurrent: false,
@@ -462,17 +370,9 @@ export function buildCyclesFromDescargas(
                     const slice = candidatePoints.slice(startIdx);
 
                     if (slice.length) {
-                        const zeroEndReal = findOperationZeroEnd(slice, config.minOperationZeroMinutesForEndReal ?? 0);
-                        if (zeroEndReal) {
-                            console.log('[Cycles][OpenCycle] Fin real detectado por operación=0 sostenida', {
-                                timestamp: zeroEndReal.toISOString(),
-                                thresholdMinutes: config.minOperationZeroMinutesForEndReal,
-                            });
-                        }
-
                         // Calculate metrics using shared helper
-                        // For open cycle, we pass zeroEndReal (if any) or the last point timestamp as the effective end for overfrozen calc
-                        const metrics = calculateCycleMetrics(slice, config, zeroEndReal ?? lastPoint.timestamp);
+                        // For open cycle, we pass lastPoint.timestamp as the effective end for overfrozen calc
+                        const metrics = calculateCycleMetrics(slice, config, lastPoint.timestamp);
 
                         console.log('[Cycles][OpenCycle] Resumen de ciclo abierto', {
                             startReal: startPoint.timestamp.toISOString(),
@@ -483,14 +383,13 @@ export function buildCyclesFromDescargas(
                         });
 
                         cycles.push({
-                            tunnelId: 'tunnel-9',
+                            tunnelId: 'tunnel-1',
                             startReal: startPoint.timestamp,
-                            endReal: zeroEndReal ?? null, // Open cycle may have fin real por operación=0
+                            endReal: null, // Open cycle
                             isCurrent: true,
                             energyAccumulatedTotal: metrics.energyAccumulatedTotal,
                             setPoint: config.cycleEnergySetPoint ?? 0,
-                            // Para el ciclo abierto usamos la última descarga detectada como dischargeTime
-                            descargaSiguiente: lastDesc,
+                            descargaSiguiente: undefined,
                             points: metrics.cyclePoints,
                             endEstimated: metrics.endEstimated,
                             activeTimeMinutes: metrics.activeTimeMinutes,
@@ -512,27 +411,14 @@ export function buildCyclesFromDescargas(
     return cycles;
 }
 
-function findOperationZeroEnd(slice: ProcessedPoint[], thresholdMinutes: number) {
-    if (!thresholdMinutes || thresholdMinutes <= 0) return null;
-    let zeroStreak = 0;
-
-    for (const point of slice) {
-        if (point.operationState === 0) {
-            const delta = Number.isFinite(point.minRealMinutes) ? point.minRealMinutes : 0;
-            zeroStreak += Math.max(delta, 0);
-            if (zeroStreak >= thresholdMinutes) {
-                return point.timestamp;
-            }
-        } else {
-            zeroStreak = 0;
-        }
-    }
-
-    return null;
-}
-
 function calculateCycleMetrics(
-    slice: ProcessedPoint[],
+    slice: Array<{
+        timestamp: Date;
+        serpTemp: number;
+        doorTemp: number;
+        operationState: number;
+        energyInstant: number;
+    }>,
     config: CycleLogicConfig,
     endRealTimestamp: Date
 ) {
@@ -586,16 +472,22 @@ function calculateCycleMetrics(
 }
 
 function buildCyclePoints(
-    slice: ProcessedPoint[]
-): CyclePointResult[] {
+    slice: Array<{
+        timestamp: Date;
+        serpTemp: number;
+        doorTemp: number;
+        operationState: number;
+        energyInstant: number;
+    }>
+) {
     if (!slice.length) return [];
     let accumulatedEnergy = 0;
-    const points: CyclePointResult[] = [];
+    const points: any[] = [];
 
     for (let i = 0; i < slice.length; i++) {
         const point = slice[i];
 
-        // Summation logic: accumulate the energy delta (energyInstant may be 0; cycles still exist)
+        // Summation logic: accumulate the energy delta
         accumulatedEnergy += point.energyInstant;
 
         points.push({
@@ -614,7 +506,7 @@ function buildCyclePoints(
     return points;
 }
 
-async function saveCycle(cycleData: CycleDraft, pointsData: CyclePointResult[]): Promise<Cycle | null> {
+async function saveCycle(cycleData: any, pointsData: any[]) {
     // Compute aggregates: average temps, energy total, dischargeTime
     const avgSerpentinTotal = pointsData.length > 0 ? pointsData.reduce((s, p) => s + (p.avgSerpentin || 0), 0) / pointsData.length : 0;
     const avgDoorTotal = pointsData.length > 0 ? pointsData.reduce((s, p) => s + (p.avgDoor || 0), 0) / pointsData.length : 0;
@@ -625,7 +517,6 @@ async function saveCycle(cycleData: CycleDraft, pointsData: CyclePointResult[]):
     const dischargeTime: Date | undefined = cycleData.descargaSiguiente;
 
     // Create cycle and points in a transaction, computing a correlative id = max(id)+1 to avoid gaps
-    let createdCycle: Cycle | null = null;
     await prisma.$transaction(async (tx) => {
         // Only unset other current cycles if this one claims to be current
         if (cycleData.isCurrent) {
@@ -650,7 +541,6 @@ async function saveCycle(cycleData: CycleDraft, pointsData: CyclePointResult[]):
                 overfrozenTimeMinutes: cycleData.overfrozenTimeMinutes,
             }
         });
-        createdCycle = cycle;
 
         const pointsWithId = pointsData.map(p => ({ ...p, cycleId: cycle.id }));
         if (pointsWithId.length > 0) {
@@ -658,93 +548,13 @@ async function saveCycle(cycleData: CycleDraft, pointsData: CyclePointResult[]):
             await tx.cyclePoint.createMany({ data: pointsWithId });
         }
     });
-    return createdCycle;
-}
-
-async function updateCycle(id: number, cycleData: CycleDraft, pointsData: CyclePointResult[]): Promise<Cycle | null> {
-    // Compute aggregates
-    const avgSerpentinTotal = pointsData.length > 0 ? pointsData.reduce((s, p) => s + (p.avgSerpentin || 0), 0) / pointsData.length : 0;
-    const avgDoorTotal = pointsData.length > 0 ? pointsData.reduce((s, p) => s + (p.avgDoor || 0), 0) / pointsData.length : 0;
-    const energyAccumulatedTotal = pointsData.length > 0 ? pointsData[pointsData.length - 1].energyAccumulated : 0;
-    const dischargeTime: Date | undefined = cycleData.descargaSiguiente;
-
-    let updatedCycle: Cycle | null = null;
-
-    await prisma.$transaction(async (tx) => {
-        // Only unset other current cycles if this one claims to be current
-        if (cycleData.isCurrent) {
-            await tx.cycle.updateMany({
-                where: { id: { not: id }, isCurrent: true },
-                data: { isCurrent: false },
-            });
-        }
-
-        updatedCycle = await tx.cycle.update({
-            where: { id },
-            data: {
-                // tunnelId: cycleData.tunnelId, // usually doesn't change
-                // startReal: cycleData.startReal, // used for matching, shouldn't change much
-                endReal: cycleData.endReal,
-                endEstimated: cycleData.endEstimated,
-                dischargeTime: dischargeTime,
-                isCurrent: cycleData.isCurrent,
-                energyAccumulatedTotal: energyAccumulatedTotal,
-                setPoint: cycleData.setPoint,
-                avgSerpentinTotal,
-                avgDoorTotal,
-                activeTimeMinutes: cycleData.activeTimeMinutes,
-                overfrozenTimeMinutes: cycleData.overfrozenTimeMinutes,
-            }
-        });
-
-        // Replace points: Delete old ones, insert new ones
-        // Optimization: We could diff them, but full replace is safer/easier for now given the volume isn't huge per cycle
-        await tx.cyclePoint.deleteMany({ where: { cycleId: id } });
-
-        const pointsWithId = pointsData.map(p => ({ ...p, cycleId: id }));
-        if (pointsWithId.length > 0) {
-            await tx.cyclePoint.createMany({ data: pointsWithId });
-        }
-    });
-
-    return updatedCycle;
 }
 
 /**
  * Helper to get the high watermark of cycle processing.
  */
-function isMissingCycleProcessingStateTable(error: unknown): error is Prisma.PrismaClientKnownRequestError & {
-    meta?: { modelName?: string };
-} {
-    return (
-        error instanceof Prisma.PrismaClientKnownRequestError &&
-        error.code === 'P2021' &&
-        error.meta?.modelName === 'CycleProcessingState'
-    );
-}
-
-export async function resetCycleProcessingState() {
-    try {
-        await prisma.cycleProcessingState.deleteMany();
-    } catch (error) {
-        if (isMissingCycleProcessingStateTable(error)) {
-            console.warn('[CycleProcessingState] Table missing, skipping deleteMany until migration runs.');
-            return;
-        }
-        throw error;
-    }
-}
-
 export async function getCycleProcessingState() {
-    try {
-        return await prisma.cycleProcessingState.findUnique({ where: { id: 1 } });
-    } catch (error) {
-        if (isMissingCycleProcessingStateTable(error)) {
-            console.warn('[CycleProcessingState] Table missing, treating as empty state.');
-            return null;
-        }
-        throw error;
-    }
+    return prisma.cycleProcessingState.findUnique({ where: { id: 1 } });
 }
 
 /**
@@ -757,22 +567,11 @@ export async function getCycleProcessingState() {
  * or null if there are no closed cycles yet.
  */
 export async function updateCycleProcessingState(newTimestamp: Date | null) {
-    try {
-        await prisma.cycleProcessingState.upsert({
-            where: { id: 1 },
-            update: { lastProcessedTimestamp: newTimestamp },
-            create: { id: 1, lastProcessedTimestamp: newTimestamp },
-        });
-    } catch (error) {
-        if (isMissingCycleProcessingStateTable(error)) {
-            console.warn(
-                '[CycleProcessingState] Table missing, skipping watermark update until migration runs.',
-                { newTimestamp }
-            );
-            return;
-        }
-        throw error;
-    }
+    await prisma.cycleProcessingState.upsert({
+        where: { id: 1 },
+        update: { lastProcessedTimestamp: newTimestamp },
+        create: { id: 1, lastProcessedTimestamp: newTimestamp },
+    });
 }
 
 /**
@@ -805,7 +604,6 @@ export async function ensureCyclesUpToDate() {
 
     const state = await getCycleProcessingState();
     let start: Date;
-    const previousWatermark = state?.lastProcessedTimestamp ?? null;
 
     if (state?.lastProcessedTimestamp) {
         // Normal case: watermark exists (endReal of last closed cycle)
@@ -837,34 +635,23 @@ export async function ensureCyclesUpToDate() {
 
     // Process cycles in the range [start, now]
     // This will delete and recreate cycles with startReal >= start
-    const result = await processCycles(start, now, false, config);
+    await processCycles(start, now, false, config);
 
     // Update watermark to endReal of last closed cycle
     const newWatermark = await calculateWatermarkFromClosedCycles();
     await updateCycleProcessingState(newWatermark);
 
-    const summary = {
+    console.log('[ensureCyclesUpToDate] Updated watermark', {
+        newWatermark: newWatermark?.toISOString() ?? 'null',
+        explanation: newWatermark
+            ? 'endReal of last closed cycle'
+            : 'no closed cycles yet (only open cycle exists)',
+    });
+
+    return {
         processedFrom: start,
         processedTo: now,
         overlapMinutes: CYCLE_JOB_OVERLAP_MINUTES,
         watermark: newWatermark,
-        descargasCount: result?.descargasCount ?? 0,
-        cyclesCreated: result?.cyclesCreated ?? 0,
-        closedCycles: result?.closedCycles ?? 0,
-        openCycles: result?.openCycles ?? 0,
-        previousWatermark,
     };
-
-    console.log('[ensureCyclesUpToDate] Summary', {
-        processedFrom: start.toISOString(),
-        processedTo: now.toISOString(),
-        descargas: summary.descargasCount,
-        cyclesCreated: summary.cyclesCreated,
-        closedCycles: summary.closedCycles,
-        openCycles: summary.openCycles,
-        previousWatermark: previousWatermark ? previousWatermark.toISOString() : 'null',
-        newWatermark: newWatermark?.toISOString() ?? 'null',
-    });
-
-    return summary;
 }

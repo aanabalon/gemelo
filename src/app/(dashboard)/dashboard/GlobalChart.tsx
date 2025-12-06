@@ -13,7 +13,6 @@ import {
   Filler,
   Legend,
   Tooltip,
-  DefaultDataPoint,
 } from 'chart.js';
 import 'chartjs-adapter-date-fns';
 import { Line } from 'react-chartjs-2';
@@ -32,22 +31,8 @@ ChartJS.register(
 const sanitizeKey = (name: string) =>
   `derived_${name.replace(/\s+/g, '_').replace(/\W/g, '')}`;
 
-type ChartPoint = {
-  timestamp: string | number;
-  energyAccumulated?: number | null;
-  [key: string]: unknown;
-};
-
-type GlobalChartProps = {
-  data: ChartPoint[];
-  setPoint?: number;
-  startTimestamp?: number;
-  endTimestamp?: number;
-};
-
-export function GlobalChart({ data, setPoint, startTimestamp, endTimestamp }: GlobalChartProps) {
-  type LineChartDataPoint = DefaultDataPoint<'line'>;
-  const chartRef = useRef<ChartJS<'line', LineChartDataPoint, unknown> | null>(null);
+export function GlobalChart({ data, setPoint, startTimestamp, endTimestamp }: { data: Record<string, any>[]; setPoint?: number; startTimestamp?: number; endTimestamp?: number }) {
+  const chartRef = useRef<any>(null);
 
   useEffect(() => {
     import('chartjs-plugin-zoom').then((mod) => {
@@ -77,11 +62,9 @@ export function GlobalChart({ data, setPoint, startTimestamp, endTimestamp }: Gl
   // ENERGÍA ACUMULADA
   // --------------------------------------
   const energiaAcumulada = useMemo(() => {
+    // Usar siempre el campo energyAccumulated si existe, igual que el gráfico inferior
     return data.map((point) => ({
-      x:
-        typeof point.timestamp === 'string'
-          ? new Date(point.timestamp).getTime()
-          : (point.timestamp as number),
+      x: typeof point.timestamp === 'string' ? new Date(point.timestamp).getTime() : point.timestamp,
       y: typeof point.energyAccumulated === 'number' ? point.energyAccumulated : null,
     }));
   }, [data]);
@@ -161,7 +144,7 @@ export function GlobalChart({ data, setPoint, startTimestamp, endTimestamp }: Gl
             },
           ]
           : []),
-      ],
+      ] as any[],
     }),
     [data, energiaAcumulada, setPoint]
   );
@@ -287,7 +270,7 @@ export function GlobalChart({ data, setPoint, startTimestamp, endTimestamp }: Gl
   const handleResetZoom = () => {
     try {
       chartRef.current?.resetZoom?.();
-    } catch {
+    } catch (e) {
       // fail silently
       // console.warn('resetZoom failed', e);
     }
@@ -300,14 +283,7 @@ export function GlobalChart({ data, setPoint, startTimestamp, endTimestamp }: Gl
           <RefreshCcw className="h-4 w-4" />
         </Button>
       </div>
-      <Line
-        ref={(instance) => {
-          chartRef.current = instance ?? null;
-        }}
-        data={chartData}
-        options={options}
-        style={{ height: '100%' }}
-      />
+      <Line ref={chartRef} data={chartData} options={options} style={{ height: '100%' }} />
     </div>
   );
 }

@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { fetchRawData, type MappedDataPoint } from '@/lib/influx';
+import { fetchRawData } from '@/lib/influx';
 import { evaluateFormula, validateFormula } from '@/lib/formulas';
 import { getSession } from '@/lib/auth';
 
@@ -38,8 +38,10 @@ export async function POST(request: Request) {
 
         // Evaluate expression against each (or up to max) row
         const recent = rows.slice(-max);
-        const values = recent.map((r: MappedDataPoint) => {
-            const ctx: Record<string, unknown> = { ...r };
+        const values = recent.map((r) => {
+            // r is a MappedDataPoint (timestamp + fields)
+            const ctx: Record<string, any> = { ...r };
+            // ensure timestamp is available as `timestamp` and `_time`
             ctx.timestamp = r.timestamp;
             ctx._time = r.timestamp;
 
